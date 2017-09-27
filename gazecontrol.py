@@ -62,20 +62,44 @@ class KeepAlive:
 class BufferSync():
     _et_syncs = []      # Eyetracking Sync items
     _et_queue = []      # Eyetracking Data items
-    _et_ts = 0          # Last Eyetracking Timestamp
     _pts_queue = []     # Pts queue
-    _pts_ts = 0         # Pts timestamp
+    lastts = 0
 
     def add_et(self, obj):
         if 'pts' in obj:
-            print obj
+            #print obj
             self._et_syncs.append(obj)
-        else:
+            self.lastts = self._pts_queue[-1] * 1000
+        elif "gp" in obj:
             self._et_queue.append(obj)
 
-    def add_pts_offset(self, offset, pts):
+    def add_pts(self, pts):
         """ Add pts to offset queue """
-        self._pts_queue.append((offset, pts))
+        self._pts_queue.append(pts)
+    
+    def sync(self):
+        pts = int(self._pts_queue[-1] * 90)
+        tsoffset = int(self._pts_queue[-1]*1000) - self.lastts
+        if len(self._et_syncs) > 0:
+            #print '----'
+            #print pts, ' - ', self._et_syncs[-1]['pts']
+            if (pts < self._et_syncs[-1]['pts']):
+                #print 'VIDEO IS BEHIND'
+                pastpts = filter(lambda x: x['pts'] <= pts, self._et_syncs)
+                if len(pastpts) > 0:
+                    #print pts, ' - ', pastpts[-1]['pts']
+                    ts = pastpts[-1]['ts']
+                    pastts = filter(lambda x: x['ts'] <= ts + tsoffset, self._et_queue)
+                    if len(pastts) > 0:
+                        return pastts[-1]
+                    else:
+                        return None
+
+            else:
+                print 'VIDEO IS AHEAD'
+                return None
+
+        
 
 class EyeTracking():
     def __init__(self, buffersync):
@@ -83,18 +107,24 @@ class EyeTracking():
 
     def start(self, peer):
         self._sock = mksock(peer)
+        self._sock.setblocking(0)
         #self._file = self._sock.makefile()
         self._keepalive = KeepAlive(self._sock, peer, "data")
 
     def read(self):
         while True:
-            data, address = self._sock.recvfrom(1024)
+            try:
+                data, address = self._sock.recvfrom(1024)
+            except socket.error:
+                return None
             #data = self._file.readline()
             #print data
             dict = json.loads(data)
             self._buffersync.add_et(dict)
-            if "gp" in dict:
-                return dict
+            if 'marker2d' in dict:
+                print dict
+            #if "gp" in dict:
+            #    return dict
    
     def stop(self):
         self._sock.close()
@@ -102,6 +132,7 @@ class EyeTracking():
 class Video():
     def __init__(self, peer, url, buffersync):
         self.lastid = None
+        self.lastpts = 0
         self._buffersync = buffersync
         self._sock = mksock(peer)
         self._keepalive = KeepAlive(self._sock, peer, "video")
@@ -113,35 +144,39 @@ class Video():
     def read(self):
         ret, frame = self.cap.read()
         pts = self.cap.get(cv2.CAP_PROP_POS_MSEC)
-        frames = self.cap.get(cv2.CAP_PROP_POS_FRAMES)
-        self._buffersync.add_pts_offset(frames, pts)
-        print "pts:", pts
-        #print "offset:", frames
+        #pts = int(pts * 90) # convert to data pts resolution (90khz)
+        self._buffersync.add_pts(pts)
         return frame
 
     def detect(self, frame, data):
         corners, ids, rejectedImgPoints = aruco.detectMarkers(frame, self.aruco_dict, parameters=self.parameters)
         annotated =  aruco.drawDetectedMarkers(frame, corners)
 
-        rows = frame.shape[0]
-        cols = frame.shape[1]
-        gazex = int(round(cols*data['gp'][0]))
-        gazey = int(round(rows*data['gp'][1]))
-        cv2.circle(annotated, (gazex, gazey), 5, (0,0,255), 2)
+        if data is not None:
+            rows = frame.shape[0]
+            cols = frame.shape[1]
+            gazex = int(round(cols*data['gp'][0]))
+            gazey = int(round(rows*data['gp'][1]))
+            cv2.circle(annotated, (gazex, gazey), 5, (0,0,255), 2)
         
-        detectedid = None
-        if len(corners) > 0 and ids is not None:
-            for roi, id in zip(corners, ids):
-                if cv2.pointPolygonTest(roi, (gazex, gazey), False) == 1:
-                    print id
-                    detectedid = id[0]
-                    self.lastid = detectedid
+            detectedid = None
+            if len(corners) > 0 and ids is not None:
+                for roi, id in zip(corners, ids):
+                    if cv2.pointPolygonTest(roi, (gazex, gazey), False) == 1:
+                        print id
+                        detectedid = id[0]
+                        self.lastid = detectedid
 
-        if  self.lastid is not None:
-            print self.lastid
-            cv2.putText(annotated, str(self.lastid), (100, 200), cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 255, 0), 2, cv2.LINE_AA)
-        cv2.imshow('frame', annotated)
-        return detectedid
+            if  self.lastid is not None:
+                cv2.putText(annotated, str(self.lastid), (100, 200), cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 255, 0), 2, cv2.LINE_AA)
+        
+            cv2.imshow('frame', annotated)
+            return detectedid
+        else:
+            cv2.imshow('frame', annotated)
+            return None
+
+
 
     def stop(self):
         self.cap.release()
@@ -183,12 +218,17 @@ if __name__=="__main__":
     if output_port is not None:
         serial = Serial(output_port)
 
+    lastdata = None
     while(True):
         #print "-"*10
-        data = et.read()
-        #print data
+        et.read()
+
         frame = video.read()
-        id = video.detect(frame, data)
+        data = sync.sync()
+        if data is not None:
+            lastdata = data
+
+        id = video.detect(frame, lastdata)
         if id is not None and output_port is not None:
             serial.write(str(id))
 
