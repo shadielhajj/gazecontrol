@@ -35,16 +35,17 @@ except ImportError:
     logging.warning('WARNING: Serial port module not installed')
     serial_available = False
 
-
+# Wifi IP is fixed
 VIDEO_STREAM_URI = 'rtsp://192.168.71.50:8554/live/scene'
 DATA_STREAM_IP = '192.168.71.50'
 
+# IPv6 Ethernet IP is now working for now
 #VIDEO_STREAM_URI = 'rtsp://[fe80::76fe:48ff:fe2c:b7a5]:8554/live/scene'
 #DATA_STREAM_IP = 'fe80::76fe:48ff:fe2c:b7a5'
 
-DATA_STREAM_PORT = 49152
-DWELL_TIME_FRAMES = 30
-USE_MULTIPROCESSING = True
+DATA_STREAM_PORT = 49152 # Livestream API port
+DWELL_TIME_FRAMES = 30 # Detection time-frame in frames
+USE_MULTIPROCESSING = True # Enable multiprocessing on UNIX and multi-threading on Windows
 
 running = True
 
@@ -59,7 +60,8 @@ def mksock(peer):
     return socket.socket(iptype, socket.SOCK_DGRAM)
 
 class KeepAlive:
-    ''' Sends keep-alive signals to a peer via a socket '''
+    ''' Sends keep-alive signals to a peer via a socket (Livestream API) '''
+
     def __init__(self, sock, peer, streamtype, timeout=1):
         self.timeout = timeout
         jsonobj = json.dumps({
@@ -76,37 +78,50 @@ class KeepAlive:
             time.sleep(self.timeout)
 
 class BufferSync():
-    et_syncs = []      # Eyetracking Sync items
-    et_queue = []      # Eyetracking Data items
-    video_pts = 0
-    last_video_ts = 0
-    last_data_ts = 0
+    ''' Sync Gaze data to Video '''
+
+    et_syncs = [] # Eyetracking Sync items
+    et_queue = [] # Eyetracking Data items
+    video_pts = 0 # The current video frame pts
+    last_video_pts = 0 # video pts corresponding to the last sync packet
+    last_data_ts = 0 # ts of the last pts sync packet
 
     def add_et(self, obj):
+        ''' Store sync packets and gaze positions '''
         if 'pts' in obj:
             self.et_syncs.append(obj)
-            self.lastts = self.last_video_ts * 1000
+            self.last_video_pts = self.video_pts
         elif 'gp' in obj:
             self.et_queue.append(obj)
 
     def add_pts(self, pts):
-        ''' Add pts to offset queue '''
+        ''' Store video frame pts '''
         self.video_pts = pts
 
     def sync(self):
-        pts = int(self.video_pts * 90)
-        tsoffset = int(self.video_pts*1000 - self.last_video_ts)
-        if len(self.et_syncs) > 0:
-            if (pts < self.et_syncs[-1]['pts']):
+        ''' Find gp packet corresponding to the last video pts and return it '''
+        pts = int(self.video_pts * 90) # convert from msec to 90khz
+        tsoffset = int(self.video_pts*1000 - self.last_video_pts * 1000) # convert to usec
+        if len(self.et_syncs) > 0: # do we have gaze data?
+            if (pts < self.et_syncs[-1]['pts']): # is gaze data ahead of video?
+                # filter all sync packets pre-dating our video frame
                 pastpts = filter(lambda x: x['pts'] <= pts, self.et_syncs)
+                # discard used sync packets
                 self.et_syncs = filter(lambda x: x['pts'] > pts, self.et_syncs)
                 if len(pastpts) > 0:
+                    # get the ts of the last sync packet
                     self.last_data_ts = pastpts[-1]['ts']
+                # get all gaze positions corresponding to the ts of the sync packet
+                # plus the offset. the offset is the diff of the current frame pts
+                # and the pts of the frame corresponding to the last sync packet
                 pastts = filter(lambda x: x['ts'] <= self.last_data_ts + tsoffset, self.et_queue)
+                # discard used gaze positions
                 self.et_queue = filter(lambda x: x['ts'] > self.last_data_ts + tsoffset, self.et_queue)
+                # return gaze position
                 if len(pastts) > 0:
                     return pastts[-1]
                 else:
+                    logging.error('ERROR: Gaze position packet not found')
                     return None
 
             else:
@@ -116,42 +131,49 @@ class BufferSync():
 
 
 class EyeTracking():
+    ''' Read eye-tracking position from data stream '''
+
     def __init__(self, buffersync):
         self.buffersync = buffersync
 
     def start(self, peer):
+        # start data Keep-Alive
         self.sock = mksock(peer)
         self.sock.setblocking(0)
-        #self.file = self.sock.makefile()
         self.keepalive = KeepAlive(self.sock, peer, 'data')
 
     def read(self):
         while True:
+            # get raw data is available
             try:
                 data, address = self.sock.recvfrom(1024)
             except socket.error:
                 return None
-            #data = self.file.readline()
+            # convert to JSON and store
             dict = json.loads(data)
             self.buffersync.add_et(dict)
             if 'marker2d' in dict:
                 print dict
-            #if 'gp' in dict:
-            #    return dict
 
     def stop(self):
         self.sock.close()
 
 class Video():
+    ''' Detect Fiducial and check if gaze position falls within ROI '''
+
     def __init__(self, peer):
         self.output_filters = OutputFilters()
         self.lastid = None
         self.lastpts = 0
+        # start video Keep-Alive
         self.sock = mksock(peer)
         self.keepalive = KeepAlive(self.sock, peer, 'video')
 
+        # init aruco detector
         self.parameters =  aruco.DetectorParameters_create()
         self.aruco_dict = aruco.Dictionary_get(aruco.DICT_4X4_100)
+
+        # init GUI
         self. param_window = 'Gaze Params'
         self. image_window = 'Gaze Image'
         cv2.namedWindow(self.param_window, cv2.WINDOW_NORMAL)
@@ -163,17 +185,20 @@ class Video():
         cv2.createTrackbar('Threshold', self.param_window, 10, 30, nothing)
 
     def detect(self, frame, data):
+        # detect aruco fiducials
         corners, ids, rejectedImgPoints = aruco.detectMarkers(frame, self.aruco_dict, parameters=self.parameters)
         annotated =  aruco.drawDetectedMarkers(frame, corners)
 
         if data is not None:
             rows = frame.shape[0]
             cols = frame.shape[1]
+            # convert to pixel coords and annotate image
             gazex = int(round(cols*data['gp'][0])) - (cv2.getTrackbarPos('X Offset', self.param_window)-100)
             gazey = int(round(rows*data['gp'][1])) - (cv2.getTrackbarPos('Y Offset', self.param_window)-100)
             cv2.circle(annotated, (gazex, gazey), 10, (0, 0, 255), 4)
 
             detectedid = None
+            # check if gaze position falls within roi
             if len(corners) > 0 and ids is not None:
                 for roi, id in zip(corners, ids):
                     if cv2.pointPolygonTest(roi, (gazex, gazey), False) == 1:
@@ -185,9 +210,11 @@ class Video():
                             self.lastid = detectedid
                         break
 
+            # annotate fiducial id on frame
             if  self.lastid is not None:
                 cv2.putText(annotated, str(self.lastid), (100, 200), cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 255, 0), 2, cv2.LINE_AA)
 
+            # display image
             cv2.imshow(self.image_window, annotated)
             return detectedid
         else:
@@ -198,6 +225,7 @@ class Video():
         cv2.destroyAllWindows()
 
 class Serial():
+    ''' handle serial port communication '''
     def __init__(self, port):
         self.ser = serial.Serial()
         self.ser.baudrate = 9600
@@ -213,6 +241,8 @@ class Serial():
         self.ser.close()
 
 class OutputFilters():
+    ''' filter detections '''
+
     def __init__(self):
         self.queue = deque([None]*DWELL_TIME_FRAMES)
         self.threshold = 0
@@ -220,6 +250,7 @@ class OutputFilters():
     def set_threshold(self, threshold):
         self.threshold = threshold
 
+    # return most common element in a list
     # https://stackoverflow.com/questions/1518522/python-most-common-element-in-a-list
     def most_common(self, L):
         # get an iterable of (item, iterable) pairs
@@ -239,7 +270,9 @@ class OutputFilters():
 
     def process(self, id):
         self.queue.append(id)
+        # get most detected fiducial id
         most_id = self.most_common(self.queue)
+        # if we have more than threshold detections per time frame, it's a hit!!
         count = self.queue.count(most_id)
         if count >= self.threshold:
             return id
@@ -249,16 +282,19 @@ class OutputFilters():
 if __name__=='__main__':
     import sys
 
+    # init logging
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     root.addHandler(logging.StreamHandler(sys.stderr))
 
+    # parse command line
     if len(sys.argv) <= 1:
         output_port = None
         logging.warning('WARNING: No serial port specified. Usage: %s PORT ' % sys.argv[0])
     else:
         output_port = sys.argv[1]
 
+    # init all object and start capturing
     peer = (DATA_STREAM_IP, DATA_STREAM_PORT)
     buffersync = BufferSync()
     video = Video(peer)
@@ -277,14 +313,18 @@ if __name__=='__main__':
     while(True):
         et.read()
 
+        # read a video frame from video capture process
         frame, pts = captureProcess.read()
         buffersync.add_pts(pts)
 
+        # read data from stream
         data = buffersync.sync()
         if data is not None:
             lastdata = data
 
+        # detect fiducials
         id = video.detect(frame, lastdata)
+        # write hits to serial port
         if id is not None and output_port is not None:
             serial.write(str(id))
 
@@ -293,6 +333,7 @@ if __name__=='__main__':
 
     running = False
 
+    # shutdown
     captureProcess.stop()
     video.stop()
     et.stop()
