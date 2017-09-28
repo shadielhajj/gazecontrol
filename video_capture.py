@@ -108,7 +108,6 @@ class ArrayQueue(object):
             self.array_pool[i] = np.frombuffer(buf, dtype=c_uint8).reshape(self.shape)
             #buf = mp.Array(c_uint8, self.byte_count)
             #self.array_pool[i] = np.frombuffer(buf.get_obj(), dtype=c_uint8).reshape(self.shape)
-            cv2.circle(self.array_pool[i], (200, 200), 100, (0, 0, 255), 10)
             self.free_arrays.put(i)
 
         self.q = mp.Queue(maxsize)
