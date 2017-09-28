@@ -15,6 +15,23 @@
 #   limitations under the License.
 
 
+# Wifi IP is fixed
+VIDEO_STREAM_URI = 'rtsp://192.168.71.50:8554/live/scene'
+DATA_STREAM_IP = '192.168.71.50'
+
+# IPv6 Ethernet IP is now working for now
+#VIDEO_STREAM_URI = 'rtsp://[fe80::76fe:48ff:fe2c:b7a5]:8554/live/scene'
+#DATA_STREAM_IP = 'fe80::76fe:48ff:fe2c:b7a5'
+
+DATA_STREAM_PORT = 49152 # Livestream API port
+DWELL_TIME_FRAMES = 30 # Detection time-frame in frames
+USE_MULTIPROCESSING = True # Enable multiprocessing on UNIX and multi-threading on Windows
+HEADLESS = False # disable GUI
+
+GAZE_OFFSET_X = 0 # gaze X offset
+GAZE_OFFSET_Y = 0 # gaze Y offset
+GAZE_THRESHOLD = 10 # detection threshold
+
 import numpy as np
 import cv2
 import cv2.aruco as aruco
@@ -35,17 +52,7 @@ except ImportError:
     logging.warning('WARNING: Serial port module not installed')
     serial_available = False
 
-# Wifi IP is fixed
-VIDEO_STREAM_URI = 'rtsp://192.168.71.50:8554/live/scene'
-DATA_STREAM_IP = '192.168.71.50'
 
-# IPv6 Ethernet IP is now working for now
-#VIDEO_STREAM_URI = 'rtsp://[fe80::76fe:48ff:fe2c:b7a5]:8554/live/scene'
-#DATA_STREAM_IP = 'fe80::76fe:48ff:fe2c:b7a5'
-
-DATA_STREAM_PORT = 49152 # Livestream API port
-DWELL_TIME_FRAMES = 30 # Detection time-frame in frames
-USE_MULTIPROCESSING = True # Enable multiprocessing on UNIX and multi-threading on Windows
 
 running = True
 
@@ -121,7 +128,7 @@ class BufferSync():
                 if len(pastts) > 0:
                     return pastts[-1]
                 else:
-                    logging.error('ERROR: Gaze position packet not found')
+                    #logging.error('ERROR: Gaze position packet not found')
                     return None
 
             else:
@@ -174,15 +181,16 @@ class Video():
         self.aruco_dict = aruco.Dictionary_get(aruco.DICT_4X4_100)
 
         # init GUI
-        self. param_window = 'Gaze Params'
-        self. image_window = 'Gaze Image'
-        cv2.namedWindow(self.param_window, cv2.WINDOW_NORMAL)
-        cv2.namedWindow(self.image_window, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(self.param_window, 600, 200)
-        cv2.resizeWindow(self.image_window, 1280, 720)
-        cv2.createTrackbar('X Offset', self.param_window, 100, 200, nothing)
-        cv2.createTrackbar('Y Offset', self.param_window, 100, 200, nothing)
-        cv2.createTrackbar('Threshold', self.param_window, 10, 30, nothing)
+        if not HEADLESS:
+            self. param_window = 'Gaze Params'
+            self. image_window = 'Gaze Image'
+            cv2.namedWindow(self.param_window, cv2.WINDOW_NORMAL)
+            cv2.namedWindow(self.image_window, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(self.param_window, 600, 200)
+            cv2.resizeWindow(self.image_window, 1280, 720)
+            cv2.createTrackbar('X Offset', self.param_window, GAZE_OFFSET_X+100, 200, nothing)
+            cv2.createTrackbar('Y Offset', self.param_window, GAZE_OFFSET_Y+100, 200, nothing)
+            cv2.createTrackbar('Threshold', self.param_window, GAZE_THRESHOLD, 30, nothing)
 
     def detect(self, frame, data):
         # detect aruco fiducials
@@ -193,16 +201,24 @@ class Video():
             rows = frame.shape[0]
             cols = frame.shape[1]
             # convert to pixel coords and annotate image
-            gazex = int(round(cols*data['gp'][0])) - (cv2.getTrackbarPos('X Offset', self.param_window)-100)
-            gazey = int(round(rows*data['gp'][1])) - (cv2.getTrackbarPos('Y Offset', self.param_window)-100)
-            cv2.circle(annotated, (gazex, gazey), 10, (0, 0, 255), 4)
+            offsetx = GAZE_OFFSET_X
+            offsety = GAZE_OFFSET_Y
+            if not HEADLESS:
+                offsetx = cv2.getTrackbarPos('X Offset', self.param_window) - 100
+                offsety = cv2.getTrackbarPos('Y Offset', self.param_window) - 100
+            gazex = int(round(cols*data['gp'][0])) - offsetx
+            gazey = int(round(rows*data['gp'][1])) - offsety
+            if not HEADLESS:
+                cv2.circle(annotated, (gazex, gazey), 10, (0, 0, 255), 4)
 
             detectedid = None
             # check if gaze position falls within roi
             if len(corners) > 0 and ids is not None:
                 for roi, id in zip(corners, ids):
                     if cv2.pointPolygonTest(roi, (gazex, gazey), False) == 1:
-                        threshold = cv2.getTrackbarPos('Threshold', self.param_window)
+                        threshold = GAZE_THRESHOLD
+                        if not HEADLESS:
+                            threshold = cv2.getTrackbarPos('Threshold', self.param_window)
                         self.output_filters.set_threshold(threshold)
                         detectedid = self.output_filters.process(id[0])
                         if detectedid is not None:
@@ -211,18 +227,21 @@ class Video():
                         break
 
             # annotate fiducial id on frame
-            if  self.lastid is not None:
+            if  self.lastid is not None and not HEADLESS:
                 cv2.putText(annotated, str(self.lastid), (100, 200), cv2.FONT_HERSHEY_SIMPLEX, 4, (0, 255, 0), 2, cv2.LINE_AA)
 
             # display image
-            cv2.imshow(self.image_window, annotated)
+            if not HEADLESS:
+                cv2.imshow(self.image_window, annotated)
             return detectedid
         else:
-            cv2.imshow(self.image_window, annotated)
+            if not HEADLESS:
+                cv2.imshow(self.image_window, annotated)
             return None
 
     def stop(self):
-        cv2.destroyAllWindows()
+        if not HEADLESS:
+            cv2.destroyAllWindows()
 
 class Serial():
     ''' handle serial port communication '''
@@ -279,8 +298,16 @@ class OutputFilters():
         else:
             return None
 
+def signal_handler(signal, frame):
+    global running
+    running = False
+
+
 if __name__=='__main__':
     import sys
+    import signal
+
+    signal.signal(signal.SIGINT, signal_handler)
 
     # init logging
     root = logging.getLogger()
@@ -310,7 +337,7 @@ if __name__=='__main__':
 
     lastdata = None
 
-    while(True):
+    while(running):
         et.read()
 
         # read a video frame from video capture process
@@ -328,10 +355,11 @@ if __name__=='__main__':
         if id is not None and output_port is not None:
             serial.write(str(id))
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        if not HEADLESS:
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                running = False
+                break
 
-    running = False
 
     # shutdown
     captureProcess.stop()

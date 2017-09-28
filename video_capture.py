@@ -21,13 +21,10 @@ import numpy as np
 import cv2
 from ctypes import c_uint8
 import os
-import logging
 
-# shared memomry IPC not supported on windows, use threads
 USE_THREADING = False or os.name == 'nt'
 
 class CaptureProcess():
-    ''' start a separate process (or thread) to capture video frames'''
     def __init__(self, url, dims, use_multi):
         self.url = url
         self.use_multi = use_multi
@@ -46,7 +43,6 @@ class CaptureProcess():
         if self.use_multi:
             self.subProcess.start()
         else:
-            # multiprocessing disabled
             self.cap = cv2.VideoCapture(self.url)
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 3);
 
@@ -54,14 +50,12 @@ class CaptureProcess():
         if self.use_multi:
             return self.arrayQueue.get()
         else:
-            # multiprocessing disabled, read frame synchronously
-            ret, frame = self.cap.read() # capture one frame
-            pts = int(self.cap.get(cv2.CAP_PROP_POS_MSEC)) # get pts
+            ret, frame = self.cap.read()
+            pts = int(self.cap.get(cv2.CAP_PROP_POS_MSEC))
             return frame, pts
 
 
     def stop(self):
-        # terminate child process / thread
         if self.use_multi:
             self.exitFlag.set()
             self.subProcess.join()
@@ -69,14 +63,17 @@ class CaptureProcess():
             self.cap.release()
 
 
+def average_color(img):
+    average_color = [img[:, :, i].mean() for i in range(img.shape[-1])]
+    return [int(round(c)) for c in average_color]
+
 def subprocess(url, arrayQueue, exitFlag):
-    ''' run the capture process asynchronously '''
     cap = cv2.VideoCapture(url)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 3);
 
     while not exitFlag.is_set():
-        ret, frame = cap.read() # capture one frame
-        pts = int(cap.get(cv2.CAP_PROP_POS_MSEC)) # get pts
+        ret, frame = cap.read()
+        pts = int(cap.get(cv2.CAP_PROP_POS_MSEC))
         arrayQueue.put(frame, pts)
 
     cap.release()
@@ -85,7 +82,6 @@ def subprocess(url, arrayQueue, exitFlag):
 
 # https://stackoverflow.com/questions/38666078/fast-queue-of-read-only-numpy-arrays
 class ArrayQueue(object):
-    ''' pass frames between processes / threads using a shared memory queue '''
     def __init__(self, template, maxsize=0):
         if type(template) is not np.ndarray:
             raise ValueError('ArrayQueue(template, maxsize) must use a numpy.ndarray as the template.')
@@ -119,7 +115,6 @@ class ArrayQueue(object):
             try:
                 arrayid = self.free_arrays.get(False)
             except Queue.Empty:
-                # buffer is full, just drop the frame so we don't lag behind
                 #print 'FRAME DROPPED'
                 return
             # copy item to the shared-memory array
