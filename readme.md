@@ -21,6 +21,8 @@ python gazecontrol [COM_PORT]
 If COM_PORT is omitted, the fiducial ID is just displayed on the monitor.
 The GUI controls allow to add on offset to the detected gaze position and alter the detection threshold.
 
+More configuration parameters can be modified in config.py
+
 ## Prerequisites
 
 * [Python 2.7](https://www.python.org/download/releases/2.7/)
