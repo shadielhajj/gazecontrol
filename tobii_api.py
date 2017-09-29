@@ -33,10 +33,10 @@ class KeepAlive:
             'type' : '.'.join(['live', streamtype, 'unicast']),
             'key' : 'anything'})
         sock.sendto(jsonobj, peer)
-        td = threading.Timer(0, self.send_keepalive_msg, [sock, jsonobj, peer])
+        td = threading.Timer(0, self.__send_keepalive_msg, [sock, jsonobj, peer])
         td.start()
 
-    def send_keepalive_msg(self, socket, jsonobj, peer):
+    def __send_keepalive_msg(self, socket, jsonobj, peer):
         while self.running:
             socket.sendto(jsonobj, peer)
             time.sleep(self.timeout)
@@ -120,9 +120,49 @@ class EyeTracking():
             # convert to JSON and store
             dict = json.loads(data)
             self.buffersync.add_et(dict)
-            if 'marker2d' in dict:
-                print dict
+            #if 'marker2d' in dict:
+            #    print dict
 
     def stop(self):
         self.keepalive.stop()
         self.sock.close()
+
+
+class Calibration():
+    ''' calibrate the glasses using the Tobii REST API '''
+    is_calibrating = False
+
+    def __create_project(self):
+        json_data = net_utils.post_request(self.base_url, '/api/projects')
+        return json_data['pr_id']
+
+    def __create_participant(self, project_id):
+        data = {'pa_project': project_id}
+        json_data = net_utils.post_request(self.base_url, '/api/participants', data)
+        return json_data['pa_id']
+
+    def __create_calibration(self, project_id, participant_id):
+        data = {'ca_project': project_id, 'ca_type': 'default', 'ca_participant': participant_id}
+        json_data = net_utils.post_request(self.base_url, '/api/calibrations', data)
+        return json_data['ca_id']
+
+    def create(self, url):
+        self.base_url = url
+        self.project_id = self.__create_project()
+        self.participant_id = self.__create_participant(self.project_id)
+        #logging.info("Project: " + project_id + ", Participant: " + participant_id + ", Calibration: " + calibration_id + " ")
+
+    def start(self):
+        logging.info('Starting calibration')
+        self.calibration_id = self.__create_calibration(self.project_id, self.participant_id)
+        net_utils.post_request(self.base_url, '/api/calibrations/' + self.calibration_id + '/start')
+        self.is_calibrating = True
+
+    def update(self):
+        if self.is_calibrating:
+            status = net_utils.wait_for_status(self.base_url, '/api/calibrations/' + self.calibration_id + '/status', 'ca_state', ['failed', 'calibrated'])
+            if status is not None:
+                self.is_calibrating = False
+            return status
+        else:
+            return None

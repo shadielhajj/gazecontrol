@@ -15,13 +15,12 @@
 #   limitations under the License.
 
 
-import numpy as np
 import cv2
 import video_capture as vc
 import video_processing as vp
 import tobii_api
 import logging
-import net_utils
+import com_utils
 import config
 
 serial_available = True
@@ -55,6 +54,10 @@ if __name__=='__main__':
     else:
         output_port = sys.argv[1]
 
+    # init calibration
+    calibration = tobii_api.Calibration()
+    calibration.create('http://'+config.DATA_STREAM_IP)
+
     # init all object and start capturing
     peer = (config.DATA_STREAM_IP, config.DATA_STREAM_PORT)
     buffersync = tobii_api.BufferSync()
@@ -67,7 +70,7 @@ if __name__=='__main__':
     et.start(peer)
 
     if output_port is not None and serial_available:
-        serial = com_utils.Serial(output_port)
+        serialport = com_utils.Serial(output_port)
 
     lastdata = None
 
@@ -87,10 +90,21 @@ if __name__=='__main__':
         id = video.detect(frame, lastdata)
         # write hits to serial port
         if id is not None and output_port is not None:
-            serial.write(str(id))
+            serialport.write(str(id))
+
+        status = calibration.update()
+        if status == 'failed':
+            logging.warn('WARNING: Calibration failed, using default calibration instead')
+            serialport.write('F')
+        elif status == 'calibrated':
+            logging.info('Calibration successful')
+            serialport.write('S')
 
         if not config.HEADLESS:
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            key = cv2.waitKey(1)
+            if key & 0xFF == ord('c'): # calibrate
+                status = calibration.start()
+            elif key & 0xFF == ord('q'): # quit
                 running = False
                 break
 
@@ -100,4 +114,4 @@ if __name__=='__main__':
     video.stop()
     et.stop()
     if output_port is not None:
-        serial.close()
+        serialport.close()

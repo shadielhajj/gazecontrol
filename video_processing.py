@@ -119,7 +119,7 @@ class OutputFilters():
 
     # return most common element in a list
     # https://stackoverflow.com/questions/1518522/python-most-common-element-in-a-list
-    def most_common(self, L):
+    def __most_common(self, L):
         # get an iterable of (item, iterable) pairs
         SL = sorted((x, i) for i, x in enumerate(L))
         groups = itertools.groupby(SL, key=operator.itemgetter(0))
@@ -138,7 +138,7 @@ class OutputFilters():
     def process(self, id):
         self.queue.append(id)
         # get most detected fiducial id
-        most_id = self.most_common(self.queue)
+        most_id = self.__most_common(self.queue)
         # if we have more than threshold detections per time frame, it's a hit!!
         count = self.queue.count(most_id)
         if count >= self.threshold:
