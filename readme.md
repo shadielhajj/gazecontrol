@@ -46,6 +46,27 @@ pip install pyserial
 pip install opencv-contrib-python
 ```
 
+### Compiling OpenCV with support for FFMPEG, Python and ArUco
+
+On some platforms (eg. Ubuntu Linux), opencv-contrib-python is compiled without FFMPEG support, in this case do not install OpenCV contrib via pip. Compile OpenCV from source like so:
+
+```
+sudo apt-get install build-essential libgtk2.0-dev libjpeg-dev libtiff5-dev libjasper-dev libopenexr-dev cmake python-dev python-numpy python-tk libtbb-dev libeigen3-dev yasm libfaac-dev libopencore-amrnb-dev libopencore-amrwb-dev libtheora-dev libvorbis-dev libxvidcore-dev libx264-dev libqt4-dev libqt4-opengl-dev sphinx-common texlive-latex-extra libv4l-dev libdc1394-22-dev libavcodec-dev libavformat-dev libswscale-dev default-jdk ant libvtk5-qt4-dev
+
+wget https://github.com/opencv/opencv/archive/3.3.0.tar.gz
+tar -xvzf 3.3.0.tar.gz
+wget https://github.com/opencv/opencv_contrib/archive/3.3.0.zip
+unzip 3.3.0.zip
+
+cd opencv-3.3.0
+mkdir build
+cd build
+cmake -D WITH_TBB=ON -D BUILD_NEW_PYTHON_SUPPORT=ON -D WITH_V4L=ON -D INSTALL_C_EXAMPLES=ON -D INSTALL_PYTHON_EXAMPLES=ON -D BUILD_EXAMPLES=ON -D WITH_QT=ON -D WITH_FFMPEG=ON -D WITH_OPENGL=ON -D WITH_VTK=ON .. -D CMAKE_BUILD_TYPE=RELEASE -D OPENCV_EXTRA_MODULES_PATH=../../opencv_contrib-3.3.0/modules ..
+make
+sudo make install
+
+```
+
 ## Authors
 
 * [Shadi El Hajj](https://github.com/shadielhajj) (main author)
