@@ -22,6 +22,7 @@ import tobii_api
 import logging
 import com_utils
 import config
+import time
 
 serial_available = True
 try:
@@ -59,6 +60,10 @@ if __name__=='__main__':
     calibration.create('http://'+config.DATA_STREAM_IP)
 
     # init all object and start capturing
+
+    if output_port is not None and serial_available:
+        serialport = com_utils.Serial(output_port)
+
     peer = (config.DATA_STREAM_IP, config.DATA_STREAM_PORT)
     buffersync = tobii_api.BufferSync()
     video = vp.VideoProcessing(peer)
@@ -69,36 +74,48 @@ if __name__=='__main__':
     et = tobii_api.EyeTracking(buffersync)
     et.start(peer)
 
-    if output_port is not None and serial_available:
-        serialport = com_utils.Serial(output_port)
 
     lastdata = None
 
+    framecounter = 0
+    newframetime = 0
+    lastframetime = 0
+    framestocount = 20
     while(running):
         et.read()
 
         # read a video frame from video capture process
         frame, pts = captureProcess.read()
         buffersync.add_pts(pts)
+        framecounter = framecounter + 1
 
+        if framecounter % framestocount == 0:
+            newframetime = time.time() 
+            logging.info('FPS: ' + str(framestocount/(newframetime-lastframetime)))
+            lastframetime = time.time()
         # read data from stream
         data = buffersync.sync()
         if data is not None:
             lastdata = data
 
         # detect fiducials
-        id = video.detect(frame, lastdata)
+        id, serialangledist = video.detect(frame, lastdata)
         # write hits to serial port
-        if id is not None and output_port is not None:
-            serialport.write(str(id))
+        if serialangledist is not None and output_port is not None:
+            serialport.write(serialangledist)
+            logging.info('Serialangledist: '+serialangledist)
+
+
 
         status = calibration.update()
         if status == 'failed':
             logging.warn('WARNING: Calibration failed, using default calibration instead')
-            serialport.write('F')
+            if output_port is not None:
+                serialport.write('F')
         elif status == 'calibrated':
             logging.info('Calibration successful')
-            serialport.write('S')
+            if output_port is not None:
+                serialport.write('S')
 
         if not config.HEADLESS:
             key = cv2.waitKey(1)

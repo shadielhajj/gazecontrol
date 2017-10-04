@@ -27,6 +27,9 @@ DWELL_TIME_FRAMES = 30 # Detection time-frame in frames
 USE_MULTIPROCESSING = True # Enable multiprocessing on UNIX and multi-threading on Windows
 HEADLESS = False # disable GUI
 
+#compute distances
+DISTANCES = True
+
 GAZE_OFFSET_X = 0 # gaze X offset
 GAZE_OFFSET_Y = 0 # gaze Y offset
 GAZE_THRESHOLD = 10 # detection threshold
