@@ -21,7 +21,7 @@ class Serial():
     ''' handle serial port communication '''
     def __init__(self, port):
         self.ser = serial.Serial()
-        self.ser.baudrate = 9600
+        self.ser.baudrate = 115200
         self.ser.port = port
         logging.info('Opened serial port ' + str(self.ser))
         self.ser.open()

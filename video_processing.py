@@ -23,6 +23,7 @@ import cv2
 import cv2.aruco as aruco
 import config
 import logging
+import numpy
 
 def nothing(x):
     pass
@@ -58,6 +59,7 @@ class VideoProcessing():
         # detect aruco fiducials
         corners, ids, rejectedImgPoints = aruco.detectMarkers(frame, self.aruco_dict, parameters=self.parameters)
         annotated =  aruco.drawDetectedMarkers(frame, corners)
+        serialout = None
 
         if data is not None:
             rows = frame.shape[0]
@@ -77,7 +79,18 @@ class VideoProcessing():
             # check if gaze position falls within roi
             if len(corners) > 0 and ids is not None:
                 for roi, id in zip(corners, ids):
-                    if cv2.pointPolygonTest(roi, (gazex, gazey), False) == 1:
+
+                    if config.DISTANCES:
+                        mroi = cv2.moments(roi)
+                        cXroi = int(mroi["m10"] / mroi["m00"])
+                        cYroi = int(mroi["m01"] / mroi["m00"])
+                        distance = numpy.linalg.norm(numpy.array((cXroi,cYroi))-numpy.array((gazex,gazey)))
+                        angle = numpy.arctan2((gazey-cYroi),(gazex-cXroi))*180/numpy.pi
+                        if angle<0:
+                            angle = angle + 360
+                        serialout = (str(int(distance)).zfill(4)+str(int(angle)).zfill(4))
+                        logging.info('Marker ' +str(id) + ' centre ' + str(cXroi) + ',' + str(cYroi) + "distance " + str(distance) + "Angle: " + str(angle) + "Serialout: " + serialout)
+                    if cv2.pointPolygonTest(roi, (gazex, gazey), False) >= 0:
                         threshold = config.GAZE_THRESHOLD
                         if not config.HEADLESS:
                             threshold = cv2.getTrackbarPos('Threshold', self.param_window)
@@ -95,11 +108,11 @@ class VideoProcessing():
             # display image
             if not config.HEADLESS:
                 cv2.imshow(self.image_window, annotated)
-            return detectedid
+            return detectedid, serialout
         else:
             if not config.HEADLESS:
                 cv2.imshow(self.image_window, annotated)
-            return None
+            return None, serialout
 
     def stop(self):
         self.keepalive.stop()
